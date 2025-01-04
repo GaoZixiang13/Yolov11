@@ -12,14 +12,14 @@ import torch
 from PIL import Image, ImageDraw, ImageFont
 from PIL import __version__ as pil_version
 
-from ultralytics.utils import IS_COLAB, IS_KAGGLE, LOGGER, TryExcept, ops, plt_settings, threaded
-from ultralytics.utils.checks import check_font, check_version, is_ascii
-from ultralytics.utils.files import increment_path
+from utils import IS_COLAB, IS_KAGGLE, LOGGER, TryExcept, ops, plt_settings, threaded
+from utils.checks import check_font, check_version, is_ascii
+from utils.files import increment_path
 
 
 class Colors:
     """
-    Ultralytics color palette https://docs.ultralytics.com/reference/utils/plotting/#ultralytics.utils.plotting.Colors.
+    Ultralytics color palette https://docs.com/reference/utils/plotting/#utils.plotting.Colors.
 
     This class provides methods to work with the Ultralytics color palette, including converting hex color codes to
     RGB values.
@@ -81,7 +81,7 @@ class Colors:
 
     !!! note "Ultralytics Brand Colors"
 
-        For Ultralytics brand colors see [https://www.ultralytics.com/brand](https://www.ultralytics.com/brand). Please use the official Ultralytics colors for all marketing materials.
+        For Ultralytics brand colors see [https://www.com/brand](https://www.com/brand). Please use the official Ultralytics colors for all marketing materials.
     """
 
     def __init__(self):
@@ -980,7 +980,7 @@ def save_one_box(xyxy, im, file=Path("im.jpg"), gain=1.02, pad=10, square=False,
 
     Example:
         ```python
-        from ultralytics.utils.plotting import save_one_box
+        from utils.plotting import save_one_box
 
         xyxy = [50, 50, 150, 150]
         im = cv2.imread("image.jpg")
@@ -1189,7 +1189,7 @@ def plot_results(file="path/to/results.csv", dir="", segment=False, pose=False, 
 
     Example:
         ```python
-        from ultralytics.utils.plotting import plot_results
+        from utils.plotting import plot_results
 
         plot_results("path/to/results.csv", segment=True)
         ```

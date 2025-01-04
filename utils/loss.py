@@ -4,9 +4,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from yolov11.utils.ops import crop_mask, xywh2xyxy, xyxy2xywh
-from yolov11.utils.tal import RotatedTaskAlignedAssigner, TaskAlignedAssigner, dist2bbox, dist2rbox, make_anchors
-from yolov11.utils.torch_utils import autocast
+from utils.ops import crop_mask, xywh2xyxy, xyxy2xywh
+from utils.tal import RotatedTaskAlignedAssigner, TaskAlignedAssigner, dist2bbox, dist2rbox, make_anchors
+from utils.torch_utils import autocast
 
 from .metrics import bbox_iou, probiou, OKS_SIGMA
 from .tal import bbox2dist
@@ -299,7 +299,7 @@ class v8SegmentationLoss(v8DetectionLoss):
 				"This error can occur when incorrectly training a 'segment' model on a 'detect' dataset, "
 				"i.e. 'yolo train model=yolov8n-seg.pt data=coco8.yaml'.\nVerify your dataset is a "
 				"correctly formatted 'segment' dataset using 'data=coco8-seg.yaml' "
-				"as an example.\nSee https://docs.ultralytics.com/datasets/segment/ for help."
+				"as an example.\nSee https://docs.com/datasets/segment/ for help."
 			) from e
 
 		# Pboxes
@@ -669,7 +669,7 @@ class v8OBBLoss(v8DetectionLoss):
 				"This error can occur when incorrectly training a 'OBB' model on a 'detect' dataset, "
 				"i.e. 'yolo train model=yolov8n-obb.pt data=dota8.yaml'.\nVerify your dataset is a "
 				"correctly formatted 'OBB' dataset using 'data=dota8.yaml' "
-				"as an example.\nSee https://docs.ultralytics.com/datasets/obb/ for help."
+				"as an example.\nSee https://docs.com/datasets/obb/ for help."
 			) from e
 
 		# Pboxes

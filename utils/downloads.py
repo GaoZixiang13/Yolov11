@@ -11,7 +11,7 @@ from urllib import parse, request
 import requests
 import torch
 
-from ultralytics.utils import LOGGER, TQDM, checks, clean_url, emojis, is_online, url2file
+from utils import LOGGER, TQDM, checks, clean_url, emojis, is_online, url2file
 
 # Define Ultralytics GitHub assets maintained at https://github.com/ultralytics/assets
 GITHUB_ASSETS_REPO = "ultralytics/assets"
@@ -74,7 +74,7 @@ def delete_dsstore(path, files_to_delete=(".DS_Store", "__MACOSX")):
 
     Example:
         ```python
-        from ultralytics.utils.downloads import delete_dsstore
+        from utils.downloads import delete_dsstore
 
         delete_dsstore("path/to/dir")
         ```
@@ -106,7 +106,7 @@ def zip_directory(directory, compress=True, exclude=(".DS_Store", "__MACOSX"), p
 
     Example:
         ```python
-        from ultralytics.utils.downloads import zip_directory
+        from utils.downloads import zip_directory
 
         file = zip_directory("path/to/dir")
         ```
@@ -152,7 +152,7 @@ def unzip_file(file, path=None, exclude=(".DS_Store", "__MACOSX"), exist_ok=Fals
 
     Example:
         ```python
-        from ultralytics.utils.downloads import unzip_file
+        from utils.downloads import unzip_file
 
         dir = unzip_file("path/to/file.zip")
         ```
@@ -195,12 +195,12 @@ def unzip_file(file, path=None, exclude=(".DS_Store", "__MACOSX"), exist_ok=Fals
     return path  # return unzip dir
 
 
-def check_disk_space(url="https://ultralytics.com/assets/coco8.zip", path=Path.cwd(), sf=1.5, hard=True):
+def check_disk_space(url="https://com/assets/coco8.zip", path=Path.cwd(), sf=1.5, hard=True):
     """
     Check if there is sufficient disk space to download and store a file.
 
     Args:
-        url (str, optional): The URL to the file. Defaults to 'https://ultralytics.com/assets/coco8.zip'.
+        url (str, optional): The URL to the file. Defaults to 'https://com/assets/coco8.zip'.
         path (str | Path, optional): The path or drive to check the available free space on.
         sf (float, optional): Safety factor, the multiplier for the required free space. Defaults to 1.5.
         hard (bool, optional): Whether to throw an error or not on insufficient disk space. Defaults to True.
@@ -246,7 +246,7 @@ def get_google_drive_file_info(link):
 
     Example:
         ```python
-        from ultralytics.utils.downloads import get_google_drive_file_info
+        from utils.downloads import get_google_drive_file_info
 
         link = "https://drive.google.com/file/d/1cqT-cJgANNrhIHCrEufUYhQ4RqiWG_lJ/view?usp=drive_link"
         url, filename = get_google_drive_file_info(link)
@@ -307,9 +307,9 @@ def safe_download(
 
     Example:
         ```python
-        from ultralytics.utils.downloads import safe_download
+        from utils.downloads import safe_download
 
-        link = "https://ultralytics.com/assets/bus.jpg"
+        link = "https://com/assets/bus.jpg"
         path = safe_download(link)
         ```
     """
@@ -323,7 +323,7 @@ def safe_download(
     elif not f.is_file():  # URL and file do not exist
         uri = (url if gdrive else clean_url(url)).replace(  # cleaned and aliased url
             "https://github.com/ultralytics/assets/releases/download/v0.0.0/",
-            "https://ultralytics.com/assets/",  # assets alias
+            "https://com/assets/",  # assets alias
         )
         desc = f"Downloading {uri} to '{f}'"
         LOGGER.info(f"{desc}...")
@@ -428,7 +428,7 @@ def attempt_download_asset(file, repo="ultralytics/assets", release="v8.3.0", **
         file_path = attempt_download_asset("yolo11n.pt", repo="ultralytics/assets", release="latest")
         ```
     """
-    from ultralytics.utils import SETTINGS  # scoped for circular import
+    from utils import SETTINGS  # scoped for circular import
 
     # YOLOv3/5u updates
     file = str(file)
@@ -480,7 +480,7 @@ def download(url, dir=Path.cwd(), unzip=True, delete=False, curl=False, threads=
 
     Example:
         ```python
-        download("https://ultralytics.com/assets/example.zip", dir="path/to/dir", unzip=True)
+        download("https://com/assets/example.zip", dir="path/to/dir", unzip=True)
         ```
     """
     dir = Path(dir)

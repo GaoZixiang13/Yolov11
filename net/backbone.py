@@ -1,17 +1,17 @@
 import torch
 import torch.nn as nn
 
-from conv import CBS, DWConv
-from component import C3K2, C2PSA, SPPF
+from .conv import CBS, DWConv
+from .component import C3K2, C2PSA, SPPF
 
 class YoloBackbone(nn.Module):
     def __init__(self, ch=(256, 512, 1024)):
         super().__init__()
         self.cv1 = CBS(3, 64, 3, 2)
         self.cv2 = CBS(64, 128, 3, 2)
-        self.c3k21 = C3K2(128, ch[0], False, 0.25)
+        self.c3k21 = C3K2(128, ch[0], c3k=False, e=0.25)
         self.cv3 = CBS(ch[0], ch[0], 3, 2)
-        self.c3k22 = C3K2(ch[0], ch[1], False, 0.25)
+        self.c3k22 = C3K2(ch[0], ch[1], c3k=False, e=0.25)
         self.cv4 = CBS(ch[1], ch[1], 3, 2)
         self.c3k23 = C3K2(ch[1], ch[1], c3k=True)
         self.cv5 = CBS(ch[1], ch[2], 3, 2)
@@ -59,7 +59,7 @@ class YoloHead(nn.Module):
         self.stride = torch.zeros(self.nl)  # strides computed during build
         c2, c3 = max((16, ch[0] // 4, self.reg_max * 4)), max(ch[0], min(self.nc, 100))  # channels
         self.cv1 = nn.ModuleList(
-            nn.Sequential(CBS(x, c2, 3), CBS(c2, c2, 3), nn.Conv2d(c2, 4*self.reg, 1)) for x in ch
+            nn.Sequential(CBS(x, c2, 3), CBS(c2, c2, 3), nn.Conv2d(c2, 4*self.reg_max, 1)) for x in ch
         )
         self.cv2 = nn.ModuleList(
             nn.Sequential(

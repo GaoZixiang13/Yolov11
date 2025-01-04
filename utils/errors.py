@@ -1,6 +1,6 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 
-from ultralytics.utils import emojis
+from utils import emojis
 
 
 class HUBModelError(Exception):
@@ -14,7 +14,7 @@ class HUBModelError(Exception):
         message (str): The error message displayed when the exception is raised.
 
     Note:
-        The message is automatically processed through the 'emojis' function from the 'ultralytics.utils' package.
+        The message is automatically processed through the 'emojis' function from the 'utils' package.
     """
 
     def __init__(self, message="Model not found. Please check model URL and try again."):

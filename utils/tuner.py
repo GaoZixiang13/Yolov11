@@ -1,7 +1,7 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 
-from ultralytics.cfg import TASK2DATA, TASK2METRIC, get_save_dir
-from ultralytics.utils import DEFAULT_CFG, DEFAULT_CFG_DICT, LOGGER, NUM_THREADS, checks
+from cfg import TASK2DATA, TASK2METRIC, get_save_dir
+from utils import DEFAULT_CFG, DEFAULT_CFG_DICT, LOGGER, NUM_THREADS, checks
 
 
 def run_ray_tune(
@@ -37,7 +37,7 @@ def run_ray_tune(
         result_grid = model.tune(data="coco8.yaml", use_ray=True)
         ```
     """
-    LOGGER.info("💡 Learn about RayTune at https://docs.ultralytics.com/integrations/ray-tune")
+    LOGGER.info("💡 Learn about RayTune at https://docs.com/integrations/ray-tune")
     if train_args is None:
         train_args = {}
 

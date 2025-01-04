@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
 
-from conv import CBS
+from .conv import CBS
 
 __all__ = (
-    "DFL"
+    "DFL",
     "C3K2",
     "C2PSA",
     "SPPF",
@@ -75,7 +75,7 @@ class C2f(nn.Module):
         self.cv1 = CBS(c1, 2 * self.ce, 1, 1)
         self.cv2 = CBS((2 + n) * self.ce, c2, 1, 1)
         self.m = nn.ModuleList(
-            BottleNeck(self.c, self.c, shortcut, g, k=((3, 3), (3, 3)), e=1.0) for _ in range(n)
+            BottleNeck(self.ce, self.ce, e=1.0, g=g, k=((3, 3), (3, 3)), shortcut=shortcut) for _ in range(n)
         )
 
     def forward(self, x):
@@ -168,7 +168,7 @@ class C2PSA(nn.Module):
     def __init__(self, c1, c2, n=1, e=0.5):
         super().__init__()
         assert c1 == c2
-        self.c = int(self.c1*e)
+        self.c = int(c1*e)
         self.cv1 = CBS(c1, 2*self.c, 1)
         self.cv2 = CBS(2*self.c, c2, 1)
         self.m = nn.Sequential(

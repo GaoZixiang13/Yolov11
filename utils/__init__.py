@@ -34,10 +34,7 @@ LOCAL_RANK = int(os.getenv("LOCAL_RANK", -1))  # https://pytorch.org/docs/stable
 ARGV = sys.argv or ["", ""]  # sometimes sys.argv = []
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLO
-ASSETS = ROOT / "assets"  # default images
 ASSETS_URL = "https://github.com/ultralytics/assets/releases/download/v0.0.0"  # assets GitHub URL
-DEFAULT_CFG_PATH = ROOT / "cfg/default.yaml"
-DEFAULT_SOL_CFG_PATH = ROOT / "cfg/solutions/default.yaml"  # Ultralytics solutions yaml path
 NUM_THREADS = min(8, max(1, os.cpu_count() - 1))  # number of YOLO multiprocessing threads
 AUTOINSTALL = str(os.getenv("YOLO_AUTOINSTALL", True)).lower() == "true"  # global auto-install mode
 VERBOSE = str(os.getenv("YOLO_VERBOSE", True)).lower() == "true"  # global verbose mode
@@ -134,7 +131,7 @@ class TQDM(tqdm_original):
         __init__: Initializes the TQDM object with custom settings.
 
     Examples:
-        >>> from yolov11.utils import TQDM
+        >>> from utils import TQDM
         >>> for i in TQDM(range(100)):
         ...     # Your processing code here
         ...     pass
@@ -155,7 +152,7 @@ class TQDM(tqdm_original):
             - The default bar format is set to TQDM_BAR_FORMAT unless overridden in kwargs.
 
         Examples:
-            >>> from yolov11.utils import TQDM
+            >>> from utils import TQDM
             >>> for i in TQDM(range(100)):
             ...     # Your code here
             ...     pass
@@ -269,7 +266,7 @@ class IterableSimpleNamespace(SimpleNamespace):
             f"""
             '{name}' object has no attribute '{attr}'. This may be caused by a modified or out of date ultralytics
             'default.yaml' file.\nPlease update your code with 'pip install -U ultralytics' and if necessary replace
-            {DEFAULT_CFG_PATH} with the latest version from
+            {name} with the latest version from
             https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/default.yaml
             """
         )
@@ -504,16 +501,6 @@ def yaml_print(yaml_file: Union[str, Path, dict]) -> None:
     yaml_dict = yaml_load(yaml_file) if isinstance(yaml_file, (str, Path)) else yaml_file
     dump = yaml.dump(yaml_dict, sort_keys=False, allow_unicode=True, width=float("inf"))
     LOGGER.info(f"Printing '{colorstr('bold', 'black', yaml_file)}'\n\n{dump}")
-
-
-# Default configuration
-DEFAULT_CFG_DICT = yaml_load(DEFAULT_CFG_PATH)
-DEFAULT_SOL_DICT = yaml_load(DEFAULT_SOL_CFG_PATH)  # Ultralytics solutions configuration
-for k, v in DEFAULT_CFG_DICT.items():
-    if isinstance(v, str) and v.lower() == "none":
-        DEFAULT_CFG_DICT[k] = None
-DEFAULT_CFG_KEYS = DEFAULT_CFG_DICT.keys()
-DEFAULT_CFG = IterableSimpleNamespace(**DEFAULT_CFG_DICT)
 
 
 def read_device_model() -> str:
@@ -998,21 +985,6 @@ def set_sentry():
 
     Additionally, the function sets custom tags and user information for Sentry events.
     """
-    if (
-        not SETTINGS["sync"]
-        or RANK not in {-1, 0}
-        or Path(ARGV[0]).name != "yolo"
-        or TESTS_RUNNING
-        or not ONLINE
-        or not IS_PIP_PACKAGE
-        or IS_GIT_DIR
-    ):
-        return
-    # If sentry_sdk package is not installed then return and do not use Sentry
-    try:
-        import sentry_sdk  # noqa
-    except ImportError:
-        return
 
     def before_send(event, hint):
         """
@@ -1174,7 +1146,7 @@ class SettingsManager(JSONDict):
         """Initializes the SettingsManager with default settings and loads user settings."""
         import hashlib
 
-        from ultralytics.utils.torch_utils import torch_distributed_zero_first
+        from utils.torch_utils import torch_distributed_zero_first
 
         root = GIT_DIR or Path()
         datasets_root = (root.parent if GIT_DIR and is_dir_writeable(root.parent) else root).resolve()
@@ -1292,13 +1264,6 @@ def vscode_msg(ext="ultralytics.ultralytics-snippets") -> str:
 
 # Run below code on utils init ------------------------------------------------------------------------------------
 
-# Check first-install steps
-PREFIX = colorstr("Ultralytics: ")
-SETTINGS = SettingsManager()  # initialize settings
-PERSISTENT_CACHE = JSONDict(USER_CONFIG_DIR / "persistent_cache.json")  # initialize persistent cache
-DATASETS_DIR = Path(SETTINGS["datasets_dir"])  # global datasets directory
-WEIGHTS_DIR = Path(SETTINGS["weights_dir"])  # global weights directory
-RUNS_DIR = Path(SETTINGS["runs_dir"])  # global runs directory
 ENVIRONMENT = (
     "Colab"
     if IS_COLAB
@@ -1311,10 +1276,9 @@ ENVIRONMENT = (
     else platform.system()
 )
 TESTS_RUNNING = is_pytest_running() or is_github_action_running()
-set_sentry()
 
 # Apply monkey patches
-from ultralytics.utils.patches import imread, imshow, imwrite, torch_load, torch_save
+from utils.patches import imread, imshow, imwrite, torch_load, torch_save
 
 torch.load = torch_load
 torch.save = torch_save
