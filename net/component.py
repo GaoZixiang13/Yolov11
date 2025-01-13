@@ -91,10 +91,6 @@ class C3K2(C2f):
             C3K(c_, c_, n=2, shortcut=shortcut, g=g) if c3k else BottleNeck(c_, c_, g=g, shortcut=shortcut) for _ in range(n)
         )
 
-    def forward(self, x):
-        xs = self.cv1(x).chunk(2, dim=1)
-        return self.cv2(torch.cat((xs[0], self.m(xs[1])), dim=1))
-
 class Attention(nn.Module):
     """
     Attention module that performs self-attention on the input tensor.
@@ -186,11 +182,10 @@ class SPPF(nn.Module):
         self.c_ = c1 // 2
         self.cv1 = CBS(c1, self.c_, 1, 1)
         self.cv2 = CBS(self.c_*4, c2, 1, 1)
-        self.maxpool = nn.MaxPool2d(kernel_size=k, stride=1, padding=k//2)
+        self.m = nn.MaxPool2d(kernel_size=k, stride=1, padding=k//2)
 
     def forward(self, x):
         y = [self.cv1(x)]
-        for _ in range(3):
-            y.extend(self.maxpool(y[-1]))
-        return self.cv2(torch.cat(y, dim=1))
+        y.extend(self.m(y[-1]) for _ in range(3))
+        return self.cv2(torch.cat(y, 1))
 

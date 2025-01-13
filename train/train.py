@@ -1,10 +1,10 @@
 import torch, time
 from torch.utils.data import Dataset, DataLoader, random_split
 
-from preprocess import preprocess
+from preprocess.preprocess import CarObjectDataset
 from utils.fit import fit_one_epoch
 from net.backbone import Yolov11
-from utils.loss import v8DetectionLoss
+from utils.loss_t import v8DetectionLoss
 from DrawPic.DrawImage import drawLoss
 
 print(torch.version.cuda)
@@ -23,10 +23,11 @@ use_cosine = False
 warmup_epoch = 1
 EPOCH = 60
 # 网络输入图片size
+input_size = (676, 380)
 RE_SIZE_shape = 640
 
 # 总的类别数
-num_classes = 14
+num_classes = 1
 # 标签平滑
 label_smoothing = 0
 CUDA = True
@@ -37,20 +38,28 @@ Parallel = False
 # gpu
 gpu_device_id = 0
 
-trainSize = 0.92
+trainSize = 0.9
 # ---------------------------------------------------------------
 
 x_train_path, y_train = [], []
+labels = {}
 with open('../DataSets/CarObject/Data/train_solution_bounding_boxes.csv') as f:
     lines = f.readlines()
     for line in lines[1:]:
         line = line.strip('\n')
         data = line.split(',')
-        x_train_path.append(data[0])
-        y_train.append([float(data[1]), float(data[2]), float(data[3]), float(data[4])])
+        img_name = data[0]
+        box      = [float(data[1]), float(data[2]), float(data[3]), float(data[4])]
+        if img_name not in labels:
+            labels[img_name] = []
+        labels[data[0]].append(box)
+        x_train_path.append(img_name)
 
-print(x_train_path)
-print(y_train)
+M = 0
+for i, name in enumerate(x_train_path):
+    y_train.append(labels[name])
+    M = max(len(labels[name]), M)
+
 device = torch.device("cuda:%d" % gpu_device_id if torch.cuda.is_available() else "cpu")
 
 # test
@@ -67,7 +76,7 @@ device = torch.device("cuda:%d" % gpu_device_id if torch.cuda.is_available() els
 # model.heads[0] = torch.nn.Linear(model.heads[0].in_features, num_classes)
 
 #使用的网络
-model = Yolov11(nc=num_classes, ch=(256, 512, 1024))
+model = Yolov11(nc=num_classes)
 print(model)
 
 #参数初始化
@@ -97,13 +106,13 @@ else:
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer=optimizer, T_max=5, eta_min=LR/100)
 
 #损失函数
-loss_func = v8DetectionLoss(model)
+loss_func = v8DetectionLoss(model, device=device)
 
 val_loss_save = 1e10
 
 time = time.asctime(time.localtime(time.time()))
 
-dataset = preprocess.CarObjectDataset(x_train_path, y_train, RE_SIZE_shape, num_classes, train=True)
+dataset = CarObjectDataset(x_train_path, y_train, input_size, RE_SIZE_shape, num_classes, M, train=True)
 trainDataLen = int(len(dataset) * trainSize)
 
 print(torch.cuda.is_available())
@@ -114,28 +123,28 @@ val_loss_save = 1e10
 print('start Training!')
 trainLoss = []
 valLoss = []
-for epoch in range(EPOCH):
-    if epoch % 5 == 0:
-        train_dataset, val_dataset = random_split(dataset, [trainDataLen, len(dataset) - trainDataLen])
-        # 数据集读取
-        train_loader = DataLoader(
-            dataset=train_dataset,
-            shuffle=True,
-            batch_size=BATCH_SIZE,
-            num_workers=num_workers,
-            pin_memory=False,
-            drop_last=True
-        )
-        val_loader = DataLoader(
-            dataset=val_dataset,
-            shuffle=False,
-            batch_size=BATCH_SIZE,
-            num_workers=num_workers,
-            pin_memory=False,
-            drop_last=True
-        )
 
-    tl, vl, val_loss_save = fit_one_epoch(model, optimizer, loss_func, lr_scheduler, EPOCH, epoch, train_loader, val_loader, RE_SIZE_shape, val_loss_save, time, CUDA, device)
-    trainLoss.append(tl)
-    valLoss.append(vl)
+train_dataset, val_dataset = random_split(dataset, [trainDataLen, len(dataset) - trainDataLen])
+
+# 数据集读取
+train_loader = DataLoader(
+    dataset=train_dataset,
+    shuffle=True,
+    batch_size=BATCH_SIZE,
+    num_workers=num_workers,
+    pin_memory=False,
+    drop_last=True
+)
+val_loader = DataLoader(
+    dataset=val_dataset,
+    shuffle=False,
+    batch_size=BATCH_SIZE,
+    num_workers=num_workers,
+    pin_memory=False,
+    drop_last=True
+)
+
+for epoch in range(EPOCH):
+    val_loss_save = fit_one_epoch(model, optimizer, loss_func, lr_scheduler, EPOCH, epoch, train_loader, val_loader, RE_SIZE_shape, val_loss_save, time, CUDA, device)
+    valLoss.append(val_loss_save)
 drawLoss([i for i in range(epoch+1)], valLoss, False)

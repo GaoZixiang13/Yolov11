@@ -27,7 +27,7 @@ class CBS(nn.Module):
         self.act = self.default_act if act is True else act if isinstance(act, nn.Module) else nn.Identity()
 
     def forward(self, x):
-        return self.acv(self.bn(self.conv(x)))
+        return self.act(self.bn(self.conv(x)))
 
 class DWConv(CBS):
     def __init__(self, c1, c2, k=1, s=1, p=None, d=1, act=True):

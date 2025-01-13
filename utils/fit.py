@@ -1,7 +1,9 @@
+
 import pandas as pd
 import torch, random
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
+from sklearn.model_selection import train_test_split
 from torchvision import transforms
 import glob, tqdm
 from PIL import Image
@@ -17,10 +19,9 @@ def fit_one_epoch(model, optimizer, loss_func, lr_scheduler, EPOCH, epoch, train
 
             # bs = bx.size(0)
             optimizer.zero_grad()
-
             train_loss = 0
-            preds = model(bx)
-            train_loss += loss_func(preds, by)
+            preds = model(bx) #list-3*[N, 4 + nc]
+            train_loss += loss_func(preds, by)[0]
 
             # train_loss = train_loss_tol/torch.maximum(num_gt, torch.ones_like(num_gt))
             train_loss.backward()
@@ -42,6 +43,9 @@ def fit_one_epoch(model, optimizer, loss_func, lr_scheduler, EPOCH, epoch, train
     training_loss = loss / (iter1 + 1)
     print('Finish Training')
     print('Start Validation')
+    # model.eval()
+    # device_val = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+    # device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
     with tqdm.tqdm(total=len(val_loader), desc=f'Epoch {epoch + 1}/{EPOCH} Validation', postfix=dict) as pbar:
         model.eval()
         with torch.no_grad():
@@ -52,7 +56,7 @@ def fit_one_epoch(model, optimizer, loss_func, lr_scheduler, EPOCH, epoch, train
 
                 val_loss = 0
                 preds = model(bx)
-                val_loss += loss_func(preds, by).item()
+                val_loss += loss_func(preds, by)[0].item()
 
                 # val_loss = val_loss_tol/max(num_gt, 1)
                 loss2 += val_loss
@@ -61,10 +65,15 @@ def fit_one_epoch(model, optimizer, loss_func, lr_scheduler, EPOCH, epoch, train
                                     })
                 pbar.update(1)
 
-    if warmup==False:
-        torch.save(model.state_dict(), '../model/val_loss%.3f-size%03d-lr%.8f-ep%03d-train_loss%.3f.pth' % (loss2 / (iter2 + 1), RE_SIZE_shape, optimizer.param_groups[0]['lr'], epoch + 1, training_loss))
-        val_loss_save = loss2 / (iter2 + 1)
-        print('Model state_dict save success!')
-    print(f'Training loss:{training_loss}, || Validation loss:{loss2 / (iter2 + 1)}')
+    if loss2 / (iter2 + 1) < val_loss_save:
+        if warmup==False:
+            torch.save(model.state_dict(), '../logs/val_loss%.3f-size%03d-lr%.8f-ep%03d-train_loss%.3f.pth' % (loss2 / (iter2 + 1), RE_SIZE_shape, optimizer.param_groups[0]['lr'], epoch + 1, training_loss))
+            val_loss_save = loss2 / (iter2 + 1)
+            print('Model state_dict save success!')
+    print('Training loss:{:.2f} || Validation loss:{:.2f}'.format(training_loss, loss2 / (iter2 + 1)))
 
-    return loss, loss2, val_loss_save
+    return val_loss_save
+
+
+
+

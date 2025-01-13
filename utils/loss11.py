@@ -4,9 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from utils.ops import crop_mask, xywh2xyxy, xyxy2xywh
 from utils.tal import RotatedTaskAlignedAssigner, TaskAlignedAssigner, dist2bbox, dist2rbox, make_anchors
-from utils.torch_utils import autocast
 
 from .metrics import bbox_iou, probiou, OKS_SIGMA
 from .tal import bbox2dist
