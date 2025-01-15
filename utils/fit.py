@@ -19,9 +19,8 @@ def fit_one_epoch(model, optimizer, loss_func, lr_scheduler, EPOCH, epoch, train
 
             # bs = bx.size(0)
             optimizer.zero_grad()
-            train_loss = 0
             preds = model(bx) #list-3*[N, 4 + nc]
-            train_loss += loss_func(preds, by)[0]
+            train_loss = loss_func(preds, by)[0]
 
             # train_loss = train_loss_tol/torch.maximum(num_gt, torch.ones_like(num_gt))
             train_loss.backward()
@@ -54,9 +53,8 @@ def fit_one_epoch(model, optimizer, loss_func, lr_scheduler, EPOCH, epoch, train
                     bx = bx.to(device)
                     by = by.to(device)
 
-                val_loss = 0
                 preds = model(bx)
-                val_loss += loss_func(preds, by)[0].item()
+                val_loss = loss_func(preds, by)[0].item()
 
                 # val_loss = val_loss_tol/max(num_gt, 1)
                 loss2 += val_loss
@@ -72,7 +70,7 @@ def fit_one_epoch(model, optimizer, loss_func, lr_scheduler, EPOCH, epoch, train
             print('Model state_dict save success!')
     print('Training loss:{:.2f} || Validation loss:{:.2f}'.format(training_loss, loss2 / (iter2 + 1)))
 
-    return val_loss_save
+    return val_loss_save, loss2 / (iter2 + 1)
 
 
 

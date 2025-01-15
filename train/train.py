@@ -12,12 +12,12 @@ print(torch.__file__)
 
 # ---------------------------------------------------------------
 # Hyper Parameters
-BATCH_SIZE = 8
+BATCH_SIZE = 6
 num_workers = 0
 # 初始学习率大小
 warmup = False
 warmup_lr = 1e-6
-LR = 1e-4
+LR = 5e-4
 use_cosine = False
 # 训练的世代数
 warmup_epoch = 1
@@ -133,7 +133,7 @@ train_loader = DataLoader(
     batch_size=BATCH_SIZE,
     num_workers=num_workers,
     pin_memory=False,
-    drop_last=True
+    drop_last=False
 )
 val_loader = DataLoader(
     dataset=val_dataset,
@@ -141,10 +141,10 @@ val_loader = DataLoader(
     batch_size=BATCH_SIZE,
     num_workers=num_workers,
     pin_memory=False,
-    drop_last=True
+    drop_last=False
 )
 
 for epoch in range(EPOCH):
-    val_loss_save = fit_one_epoch(model, optimizer, loss_func, lr_scheduler, EPOCH, epoch, train_loader, val_loader, RE_SIZE_shape, val_loss_save, time, CUDA, device)
-    valLoss.append(val_loss_save)
+    val_loss_save, val_loss = fit_one_epoch(model, optimizer, loss_func, lr_scheduler, EPOCH, epoch, train_loader, val_loader, RE_SIZE_shape, val_loss_save, time, CUDA, device)
+    valLoss.append(val_loss)
 drawLoss([i for i in range(epoch+1)], valLoss, False)

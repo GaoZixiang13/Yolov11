@@ -40,14 +40,15 @@ class CarObjectDataset(Dataset):
 
     def image_preprocess(self, img_path, labels):
         img = Image.open('../DataSets/CarObject/data/training_images/'+img_path).convert('RGB')
+        print(np.transpose(np.array(img)/255., (2, 0, 1)).shape)
+
         img = transforms.Pad((0,0,0,self.input_size[0]-self.input_size[1]), fill=0)(img)
         # --------------------------------------------------------
         # normal data augmentation
         img = transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1)(img) #色域变换
         # --------------------------------------------------------
-
         img = img.resize((self.resize_shape, self.resize_shape), Image.BICUBIC)
-        img = np.transpose(np.array(img)/255., (2, 0, 1))
+        img = np.transpose(np.array(img)/255., (2, 0, 1)) #(c, w, h)
         img_tensor = torch.from_numpy(img).type(torch.FloatTensor)
 
         if len(labels) > 0:
