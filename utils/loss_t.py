@@ -56,13 +56,12 @@ class v8DetectionLoss:
         pred_distri = pred_distri.permute(0, 2, 1).contiguous()
 
         anchor_points, stride_tensor = make_anchors(preds, self.stride, 0)
+        pred_bboxes = self.bbox_decode(anchor_points, pred_distri) #单位：格子
 
         # Targets
         gt_labels, gt_bboxes = targets.split((1, 4), 2)  # cls, xyxy
         mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0.0).bool()
 
-        # Pboxes
-        pred_bboxes = self.bbox_decode(anchor_points, pred_distri)
         loss_box, loss_cls, loss_conf = self.assigner(pred_bboxes, gt_bboxes, mask_gt, pred_scores, pred_conf, gt_labels.long(), anchor_points, stride_tensor)
         loss = loss_box*self.hyp.box + loss_cls*self.hyp.cls + loss_conf*self.hyp.conf
 
@@ -84,25 +83,34 @@ def iou(preds, boxes, ciou=False, eps=1e-9): #(bs, num, 4)
     # IoU
     iou = inter / union
 
-    if ciou:
+    if ciou == True:
         cw = b1_x2.maximum(b2_x2) - b1_x1.minimum(b2_x1)  # convex (smallest enclosing box) width
         ch = b1_y2.maximum(b2_y2) - b1_y1.minimum(b2_y1)  # convex height
         c2 = cw.pow(2) + ch.pow(2) + eps  # convex diagonal squared
         d2 = ((b2_x1 + b2_x2 - b1_x1 - b1_x2).pow(2) + (b2_y1 + b2_y2 - b1_y1 - b1_y2).pow(2)) / 4  # center dist**2
-        v = (4 / math.pi**2) * ((w2 / h2).atan() - (w1 / h1).atan()).pow(2)
+        v = (4 / (math.pi**2)) * ((w2 / h2).atan() - (w1 / h1).atan()).pow(2)
         with torch.no_grad():
             alpha = v / (v - iou + (1 + eps))
         return iou - (d2 / c2 + v * alpha)  # CIoU
     return iou
 
 class simOTA(nn.Module):
-    def __init__(self, reshape=640, nc=80, topk=10, eps=1e-9):
+    def __init__(self, reshape=640, nc=80, topk=10, eps=1e-7):
         super().__init__()
         self.topk = topk
         self.nc = nc
         self.eps = eps
         self.reshape = reshape
         self.dis = 2.5
+
+    def Focalloss(self, pred, target):
+        alpha, gamma = .25, 2
+
+        noobj_mask = (target == 0)
+        pt = torch.clone(pred)
+        pt[noobj_mask] = 1 - pred[noobj_mask]
+
+        return -alpha * (1 - pt).pow(gamma) * torch.log(pt + self.eps)
 
     def forward(self, pred_boxes, gt_boxes, mask_gt, pred_scores, pred_conf, gt_labels, anchor_points, stride_tensor):
         '''
@@ -116,14 +124,16 @@ class simOTA(nn.Module):
         :param stride_tensor: (h*w, 1)
         :return: pt_mask: (bs, num_gt, h*w)
         '''
-        bs, hw = pred_boxes.shape[0], pred_boxes.shape[1]
+        bs, hw, nc = pred_scores.shape[0], pred_scores.shape[1], pred_scores.shape[2]
         dtype = pred_boxes.dtype
         device = pred_boxes.device
         num_max_gt = mask_gt.shape[1]
         grid_tensor = self.reshape / stride_tensor #(h*w, 1)
         gt_boxes_grid = gt_boxes.unsqueeze(-2).expand(bs, num_max_gt, hw, 4)
-        gt_boxes_grid = gt_boxes_grid/grid_tensor
-        pred_boxes_real = (pred_boxes*stride_tensor)
+        gt_boxes_grid = gt_boxes_grid/grid_tensor    #单位：格子
+        pred_boxes_real = (pred_boxes*stride_tensor) #单位：真实长度 x1y1x2y2格式 左上角右下角
+
+        pred_sc = pred_scores * pred_conf.expand(bs, hw, nc)
 
         loss = torch.zeros(3, device=device).type(dtype)  # conf, box, cls
 
@@ -148,6 +158,9 @@ class simOTA(nn.Module):
 
             cost_function = []
 
+            loss_t = torch.zeros(3, device=device).type(dtype)  # conf, box, cls
+            num_gt = mask_gt[b].sum()
+
             for i in range(num_max_gt):
                 gt_box = gt_boxes[b][i]
                 fg_mask_i = fg_mask[i] #(h*w)
@@ -160,9 +173,9 @@ class simOTA(nn.Module):
                     continue
 
                 iou_val = iou(pred_boxes_real[b], gt_box.unsqueeze(0).expand(hw, 4), ciou=False).squeeze(-1) #(h*w, 1)
-                iou_loss = 1 - iou_val
-                cls_loss  = F.binary_cross_entropy(pred_scores[b], gt_scores[i].unsqueeze(0).expand(hw, self.nc)) #(num_fg, nc)
-                cost = (cls_loss + 3.0 * iou_loss + 100000 * (~in_and_i)) #(h*w)
+                iou_cost = -torch.log(iou_val + self.eps)
+                cls_loss  = self.Focalloss(pred_sc[b], gt_scores[i].unsqueeze(0).expand(hw, self.nc)).squeeze(-1) #(num_fg, nc)
+                cost = (cls_loss + 3.0 * iou_cost + 100000 * (~in_and_i)) #(h*w)
 
                 if num_fg == 0:
                     print("error!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
@@ -171,9 +184,9 @@ class simOTA(nn.Module):
                 pt_num = pt_num.sum(-1).clamp(min=1).type(torch.LongTensor) #(0)
 
                 _, pt_mask_i_idx = cost.topk(k=pt_num, dim=-1, largest=False) #(pt_num[b])
-                mask_t = F.one_hot(pt_mask_i_idx, num_classes=hw).bool().squeeze(0).to(device)
+                mask_t = F.one_hot(pt_mask_i_idx, num_classes=hw).sum(0).bool().squeeze(0).to(device)
 
-                if len(mask_t.shape) > 1:
+                if len(mask_t.shape) != 1:
                     print(mask_t.shape)
                 pt_mask[i][mask_t] = True
                 cost_function.append(cost)
@@ -183,23 +196,28 @@ class simOTA(nn.Module):
             # 去除重叠样本
             overlap_mask = pt_mask.sum(dim=0) > 1 #(h*w)
             cost_min_gt_indices = torch.argmin(cost_function[:, overlap_mask], dim=0) #(num_overlap)
-            pt_mask[..., overlap_mask] = False
+            pt_mask[:, overlap_mask] = False
             pt_mask[cost_min_gt_indices, overlap_mask] = True
 
             for i in range(num_max_gt):
                 gt_box = gt_boxes[b][i]
-                if gt_box.sum() == 0:
+                if mask_gt[b][i] == False:
                     continue
 
                 num_pt = pt_mask[i].sum().long().item()
                 if num_pt == 0:
                     continue
 
-                loss[0] += (1 - iou(pred_boxes_real[b][pt_mask[i]], gt_box, ciou=True)).sum()
-                loss[1] += F.binary_cross_entropy(pred_scores[b][pt_mask[i]], gt_scores[i].unsqueeze(0).expand(num_pt, self.nc))
+                loss_t[0] += (1 - iou(pred_boxes_real[b][pt_mask[i]], gt_box.unsqueeze(0).expand(num_pt, 4), ciou=False)**2).squeeze(-1).sum()
+                loss_t[1] += self.Focalloss(pred_scores[b][pt_mask[i]], gt_scores[i].unsqueeze(0).expand(num_pt, self.nc)).sum()
 
+            loss_t[0] /= num_gt
+            loss_t[1] /= num_gt
             gt_conf = pt_mask.sum(dim=0) > 0 #(h*w)
-            loss[2] += F.binary_cross_entropy(pred_conf[b].squeeze(-1), gt_conf.type(dtype))
+            loss[2] += self.Focalloss(pred_conf[b].squeeze(-1), gt_conf.type(dtype)).sum()
+
+            loss[0] += loss_t[0]
+            loss[1] += loss_t[1]
 
         return loss[0], loss[1], loss[2]
 

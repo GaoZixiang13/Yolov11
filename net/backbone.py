@@ -55,16 +55,16 @@ class YoloHead(nn.Module):
         self.nc = nc  # number of classes
         self.nl = len(ch)  # number of detection layers
         self.no = nc + 5
-        c2, c3 = max((16, ch[0] // 4, 4)), max(ch[0], min(self.nc, 100))  # channels
+        c2, c3 = 32, 128  # channels
         self.cv2 = nn.ModuleList(
             nn.Sequential(CBS(x, c2, 3), CBS(c2, c2, 3), nn.Conv2d(c2, 5, 1)) for x in ch
         )
         self.cv3 = (
             nn.ModuleList(
                 nn.Sequential(
-                    nn.Sequential(DWConv(x, x, 3), CBS(x, c3, 1)),
-                    nn.Sequential(DWConv(c3, c3, 3), CBS(c3, c3, 1)),
-                    nn.Conv2d(c3, self.nc, 1),
+                    nn.Sequential(DWConv(x, x, 3), CBS(x, c3//2, 1)),
+                    nn.Sequential(DWConv(c3//2, c3//2, 3), CBS(c3//2, c3//4, 1)),
+                    nn.Conv2d(c3//4, self.nc, 1),
                 )
                 for x in ch
             )
@@ -76,7 +76,7 @@ class YoloHead(nn.Module):
         return x
 
 class Hyp:
-    def __init__(self, box=3, cls=1, conf=2):
+    def __init__(self, box=6, cls=2.5, conf=1.5):
         self.box = box
         self.cls = cls
         self.conf = conf

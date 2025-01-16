@@ -38,7 +38,7 @@ with open('../DataSets/CarObject/Data/sample_submission.csv') as f:
 device = torch.device("cuda:%d" % gpu_device_id if torch.cuda.is_available() else "cpu")
 model = Yolov11(nc=1)
 model_path = '../logs/' \
-             'val_loss2.738-size640-lr0.00000055-ep056-train_loss2.132.pth'
+             'val_loss43.231-size640-lr0.00001292-ep026-train_loss44.522.pth'
 model.load_state_dict(torch.load(model_path))
 
 if Parallel:
@@ -62,18 +62,23 @@ def img_preprocess(img_path):
 
     return img_tensor
 
-def boxes_nms(boxes, score, cls_th=0.01, nms_th=0.3):
-    pt_mask = torch.ones_like(score).bool()
-    pt_mask[score < cls_th] = False
+def boxes_nms(boxes, score, pred_conf, cls_th=0.1, nms_th=0.3):
+    '''
+    :param boxes: (hw, 4)
+    :param score: (hw, nc)
+    :param pred_conf: (hw, 1)
+    :return:
+    '''
+    pt_mask = ((score*pred_conf > cls_th).sum(-1) > 0) #(hw)
     unselected = pt_mask == True
-    sorted  = score.argsort()
+    sorted  = (score*pred_conf).squeeze(-1).argsort() #(hw)
     while unselected.sum() > 0:
         cur_box_idx = sorted[pt_mask].argmax()
         box = boxes[pt_mask][cur_box_idx]
-        ciou = (1 - iou(boxes, box, ciou=True)).squeeze(-1)
-        ignore = (ciou > nms_th) & (ciou != 0)
+        iou_ = iou(boxes, box, ciou=False).squeeze(-1)
+        ignore = (iou_ > nms_th) & (iou_ < 1)
         pt_mask[ignore] = False
-        unselected[ciou > nms_th] = False
+        unselected[iou_ > nms_th] = False
         sorted[pt_mask & (unselected==False)] = -1
 
     return pt_mask
@@ -102,11 +107,10 @@ for i, img_name in enumerate(x_train_path):
 
     # Pboxes
     pred_bboxes = loss.bbox_decode(anchor_points, pred_distri)*stride_tensor  # xyxy, (b, h*w, 4)
-    pred_bboxes = (pred_bboxes.squeeze(0)/resize_shape*input_size[0]).clamp(min=0.01, max=input_size[0]-0.01)
+    pred_bboxes = (pred_bboxes.squeeze(0)/resize_shape*input_size[0])
 
     pred_scores = pred_scores.squeeze(0)
-    print(pred_bboxes)
-    pt_mask = boxes_nms(pred_bboxes, pred_scores)
+    pt_mask = boxes_nms(pred_bboxes, pred_scores, pred_conf.squeeze(0))
     boxes = pred_bboxes[pt_mask]
 
     '''
@@ -117,7 +121,7 @@ for i, img_name in enumerate(x_train_path):
 
     for i, b in enumerate(boxes):
         draw.rectangle([b[0], b[1], b[2], b[3]], outline='red', width=2)
-        draw.text((b[0]+1, b[1]+1), 'Car {:.2f}'.format(pred_scores[pt_mask][i] * 100), fill='red')
+        draw.text((b[0]+1, b[1]+1), 'Car {:.2f}'.format(pred_scores[pt_mask][i].item() * 100), fill='red')
         # draw.text((b[0] - b[2] / 2, b[1] - b[2] / 2), '{:.2f}'.format(b[4] * b[5] * 100), fill='red', stroke_width=1)
 
     image.save('../predictImages/{}.jpg'.format(img_name.split('.')[0]))
