@@ -14,8 +14,6 @@ resize_shape = 640
 num_classes = 1
 gpu_device_id = 0
 Parallel = False
-single_img = True
-reg_max = 16
 
 # font = ImageFont.truetype(r'/home/b201/gzx/yolox_self/font/STSONG.TTF', 12)
 
@@ -38,7 +36,7 @@ with open('../DataSets/CarObject/Data/sample_submission.csv') as f:
 device = torch.device("cuda:%d" % gpu_device_id if torch.cuda.is_available() else "cpu")
 model = Yolov11(nc=1)
 model_path = '../logs/' \
-             'val_loss43.231-size640-lr0.00001292-ep026-train_loss44.522.pth'
+             'val_loss59.434-size640-lr0.00000239-ep042-train_loss52.772.pth'
 model.load_state_dict(torch.load(model_path))
 
 if Parallel:
@@ -62,7 +60,7 @@ def img_preprocess(img_path):
 
     return img_tensor
 
-def boxes_nms(boxes, score, pred_conf, cls_th=0.1, nms_th=0.3):
+def boxes_nms(boxes, score, pred_conf, cls_th=0.3, nms_th=0.45):
     '''
     :param boxes: (hw, 4)
     :param score: (hw, nc)
@@ -103,7 +101,7 @@ for i, img_name in enumerate(x_train_path):
     pred_scores = pred_scores.permute(0, 2, 1).contiguous().sigmoid()  # (1, h*w, nc)
     pred_distri = pred_distri.permute(0, 2, 1).contiguous()
 
-    anchor_points, stride_tensor = make_anchors(preds, model.stride, 0.5)
+    anchor_points, stride_tensor = make_anchors(preds, model.stride, 0)
 
     # Pboxes
     pred_bboxes = loss.bbox_decode(anchor_points, pred_distri)*stride_tensor  # xyxy, (b, h*w, 4)
@@ -125,4 +123,4 @@ for i, img_name in enumerate(x_train_path):
         # draw.text((b[0] - b[2] / 2, b[1] - b[2] / 2), '{:.2f}'.format(b[4] * b[5] * 100), fill='red', stroke_width=1)
 
     image.save('../predictImages/{}.jpg'.format(img_name.split('.')[0]))
-    print('推理延迟为%.2fms' % delay)
+print('done!\n')

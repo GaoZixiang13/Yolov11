@@ -76,7 +76,7 @@ class YoloHead(nn.Module):
         return x
 
 class Hyp:
-    def __init__(self, box=6, cls=2.5, conf=1.5):
+    def __init__(self, box=6, cls=2.5, conf=1):
         self.box = box
         self.cls = cls
         self.conf = conf

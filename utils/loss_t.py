@@ -62,7 +62,7 @@ class v8DetectionLoss:
         gt_labels, gt_bboxes = targets.split((1, 4), 2)  # cls, xyxy
         mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0.0).bool()
 
-        loss_box, loss_cls, loss_conf = self.assigner(pred_bboxes, gt_bboxes, mask_gt, pred_scores, pred_conf, gt_labels.long(), anchor_points, stride_tensor)
+        loss_box, loss_cls, loss_conf = self.assigner(pred_bboxes*stride_tensor, gt_bboxes, mask_gt, pred_scores, pred_conf, gt_labels.long(), anchor_points, stride_tensor)
         loss = loss_box*self.hyp.box + loss_cls*self.hyp.cls + loss_conf*self.hyp.conf
 
         return loss
@@ -112,6 +112,10 @@ class simOTA(nn.Module):
 
         return -alpha * (1 - pt).pow(gamma) * torch.log(pt + self.eps)
 
+    def BCEloss(self, pred, target):
+        output = - target * torch.log(pred + self.eps) - (1.0 - target) * torch.log(1.0 - pred + self.eps)
+        return output
+
     def forward(self, pred_boxes, gt_boxes, mask_gt, pred_scores, pred_conf, gt_labels, anchor_points, stride_tensor):
         '''
         :param pred_boxes: (bs, h*w, 4)
@@ -128,59 +132,52 @@ class simOTA(nn.Module):
         dtype = pred_boxes.dtype
         device = pred_boxes.device
         num_max_gt = mask_gt.shape[1]
-        grid_tensor = self.reshape / stride_tensor #(h*w, 1)
-        gt_boxes_grid = gt_boxes.unsqueeze(-2).expand(bs, num_max_gt, hw, 4)
-        gt_boxes_grid = gt_boxes_grid/grid_tensor    #单位：格子
-        pred_boxes_real = (pred_boxes*stride_tensor) #单位：真实长度 x1y1x2y2格式 左上角右下角
-
-        pred_sc = pred_scores * pred_conf.expand(bs, hw, nc)
 
         loss = torch.zeros(3, device=device).type(dtype)  # conf, box, cls
 
         for b in range(bs):
             pt_mask = torch.zeros(num_max_gt, hw).bool().to(device) #(num_max_gt, h*w)
-
-            anchor_points_pd = (anchor_points+0.5).unsqueeze(0).expand(num_max_gt, hw, 2) #(num_max_gt, h*w, 2)
-            gt_grid       = gt_boxes_grid[b] #(num_max_gt, h*w, 4)
-            lt = anchor_points_pd - gt_grid[..., :2]
-            rb = gt_grid[..., 2:] - anchor_points_pd
-            in_boxes = ((lt > 0).sum(-1) == 2) & ((rb > 0).sum(-1) == 2)  #(num_max_gt, h*w)
-
-            gt_boxes_center = (gt_grid[..., :2] + gt_grid[..., 2:])/2
-            gt_boxes_lt, gt_boxes_rb = gt_boxes_center - self.dis, gt_boxes_center + self.dis
-            lt_two = anchor_points_pd - gt_boxes_lt
-            rb_two = gt_boxes_rb - anchor_points_pd #(num_max_gt, h*w, 2)
-            in_centers = ((lt_two > 0).sum(-1) == 2) & ((rb_two > 0).sum(-1) == 2) #(num_max_gt, h*w)
-
-            fg_mask, is_in_boxes_and_centers = in_boxes | in_centers, in_boxes & in_centers #(num_max_gt, h*w)
-
-            gt_scores = F.one_hot(gt_labels[b], num_classes=self.nc).squeeze(1).type(dtype).to(device) #(num_max_gt, nc)
-
-            cost_function = []
-
             loss_t = torch.zeros(3, device=device).type(dtype)  # conf, box, cls
             num_gt = mask_gt[b].sum()
+            cost_function = []
 
             for i in range(num_max_gt):
-                gt_box = gt_boxes[b][i]
-                fg_mask_i = fg_mask[i] #(h*w)
-                in_and_i = is_in_boxes_and_centers[i]
-                num_fg = fg_mask_i.sum().long()
-
                 if mask_gt[b][i] == False:
-                    cost = 100000 * (~in_and_i)  # (h*w)
+                    cost = 1000000 * torch.ones(hw).type(dtype).to(device)  # (h*w)
                     cost_function.append(cost)
                     continue
 
-                iou_val = iou(pred_boxes_real[b], gt_box.unsqueeze(0).expand(hw, 4), ciou=False).squeeze(-1) #(h*w, 1)
+                gt_scores = F.one_hot(gt_labels[b][i], num_classes=self.nc).squeeze(0).type(dtype).to(device)  # (nc)
+
+                anchor_points_pd = (anchor_points + 0.5) * stride_tensor #(hw, 2)
+                gt_box = gt_boxes[b][i] #(4)
+                lt = anchor_points_pd - gt_box[:2]
+                rb = gt_box[2:] - anchor_points_pd
+                in_boxes = ((lt > 0).sum(dim=-1) == 2) & ((rb > 0).sum(dim=-1) == 2)  # (hw)
+
+                gt_boxes_center = (gt_box[:2] + gt_box[2:]) / 2
+                dis = (self.dis * stride_tensor).expand(hw, 2)
+                gt_boxes_lt, gt_boxes_rb = gt_boxes_center - dis, gt_boxes_center + dis
+                lt_two = anchor_points_pd - gt_boxes_lt
+                rb_two = gt_boxes_rb - anchor_points_pd  # (num_max_gt, h*w, 2)
+                in_centers = ((lt_two > 0).sum(-1) == 2) & ((rb_two > 0).sum(-1) == 2)  # (h*w)
+
+                fg_mask, is_in_boxes_and_centers = in_boxes | in_centers, in_boxes & in_centers  # (h*w)
+
+                num_fg = fg_mask.sum().long()
+
+                gt_score_pd = gt_scores.unsqueeze(0).expand(hw, self.nc)
+                gt_score_pd[~fg_mask] = 0.
+
+                iou_val = iou(pred_boxes[b], gt_box, ciou=False).squeeze(-1) #(h*w, 1)
                 iou_cost = -torch.log(iou_val + self.eps)
-                cls_loss  = self.Focalloss(pred_sc[b], gt_scores[i].unsqueeze(0).expand(hw, self.nc)).squeeze(-1) #(num_fg, nc)
-                cost = (cls_loss + 3.0 * iou_cost + 100000 * (~in_and_i)) #(h*w)
+                cls_loss  = self.Focalloss(pred_scores[b], gt_score_pd).sum(-1) #(num_fg, nc)
+                cost = (cls_loss + 3.0 * iou_cost + 100000 * (~is_in_boxes_and_centers)) #(h*w)
 
                 if num_fg == 0:
                     print("error!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
                 k = min(self.topk, num_fg)
-                pt_num, _ = iou_val[fg_mask_i].topk(k=k, dim=-1) #(10)
+                pt_num, _ = iou_val[fg_mask].topk(k=k, dim=-1) #(10)
                 pt_num = pt_num.sum(-1).clamp(min=1).type(torch.LongTensor) #(0)
 
                 _, pt_mask_i_idx = cost.topk(k=pt_num, dim=-1, largest=False) #(pt_num[b])
@@ -200,21 +197,24 @@ class simOTA(nn.Module):
             pt_mask[cost_min_gt_indices, overlap_mask] = True
 
             for i in range(num_max_gt):
-                gt_box = gt_boxes[b][i]
                 if mask_gt[b][i] == False:
                     continue
 
+                gt_box = gt_boxes[b][i]
                 num_pt = pt_mask[i].sum().long().item()
                 if num_pt == 0:
                     continue
 
-                loss_t[0] += (1 - iou(pred_boxes_real[b][pt_mask[i]], gt_box.unsqueeze(0).expand(num_pt, 4), ciou=False)**2).squeeze(-1).sum()
-                loss_t[1] += self.Focalloss(pred_scores[b][pt_mask[i]], gt_scores[i].unsqueeze(0).expand(num_pt, self.nc)).sum()
+                gt_scores = F.one_hot(gt_labels[b][i], num_classes=self.nc).squeeze(0).type(dtype).to(device)  # (nc)
+                gt_score_pd = gt_scores.unsqueeze(0).expand(num_pt, self.nc)
+
+                loss_t[0] += (1 - iou(pred_boxes[b][pt_mask[i]], gt_box, ciou=True)).sum()
+                loss_t[1] += self.Focalloss(pred_scores[b][pt_mask[i]], gt_score_pd).sum()
 
             loss_t[0] /= num_gt
             loss_t[1] /= num_gt
             gt_conf = pt_mask.sum(dim=0) > 0 #(h*w)
-            loss[2] += self.Focalloss(pred_conf[b].squeeze(-1), gt_conf.type(dtype)).sum()
+            loss[2] += self.Focalloss(pred_conf[b].sum(-1), gt_conf.type(dtype)).sum()
 
             loss[0] += loss_t[0]
             loss[1] += loss_t[1]
