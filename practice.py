@@ -1,9 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-a = torch.tensor([[0, 1, 1, 0, 2]]).float()
-b = torch.tensor([0, 1, 2]).long()
+a = torch.tensor([[1], [2], [3], [4], [5], [6]])
+b = a.squeeze(-1)
 
-print(a)
-a[b] = 0
-print(a)
+print(a, b)

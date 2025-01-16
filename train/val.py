@@ -6,8 +6,7 @@ import torch, time
 import numpy as np
 import glob, tqdm
 from PIL import Image, ImageDraw
-from utils.loss_t import v8DetectionLoss, make_anchors
-from utils.metrics import bbox_iou
+from utils.loss_t import v8DetectionLoss, make_anchors, iou
 
 CUDA = True
 input_size = (676, 380)
@@ -39,7 +38,7 @@ with open('../DataSets/CarObject/Data/sample_submission.csv') as f:
 device = torch.device("cuda:%d" % gpu_device_id if torch.cuda.is_available() else "cpu")
 model = Yolov11(nc=1)
 model_path = '../logs/' \
-             'val_loss94.463-size640-lr0.00000599-ep042-train_loss65.933.pth'
+             'val_loss2.738-size640-lr0.00000055-ep056-train_loss2.132.pth'
 model.load_state_dict(torch.load(model_path))
 
 if Parallel:
@@ -63,7 +62,7 @@ def img_preprocess(img_path):
 
     return img_tensor
 
-def boxes_nms(boxes, score, cls_th=0.1, nms_th=0.3):
+def boxes_nms(boxes, score, cls_th=0.01, nms_th=0.3):
     pt_mask = torch.ones_like(score).bool()
     pt_mask[score < cls_th] = False
     unselected = pt_mask == True
@@ -71,8 +70,8 @@ def boxes_nms(boxes, score, cls_th=0.1, nms_th=0.3):
     while unselected.sum() > 0:
         cur_box_idx = sorted[pt_mask].argmax()
         box = boxes[pt_mask][cur_box_idx]
-        ciou = bbox_iou(boxes, box, xywh=False, CIoU=True).squeeze(-1)
-        ignore = (ciou > nms_th) & (ciou != 1)
+        ciou = (1 - iou(boxes, box, ciou=True)).squeeze(-1)
+        ignore = (ciou > nms_th) & (ciou != 0)
         pt_mask[ignore] = False
         unselected[ciou > nms_th] = False
         sorted[pt_mask & (unselected==False)] = -1
@@ -82,29 +81,31 @@ def boxes_nms(boxes, score, cls_th=0.1, nms_th=0.3):
 model.eval()
 for i, img_name in enumerate(x_train_path):
     img = img_preprocess(img_name).type(torch.FloatTensor).unsqueeze(0)
-    loss = v8DetectionLoss(model, device=device)
+    loss = v8DetectionLoss(model, re_shape=resize_shape, device=device)
     if CUDA:
         img = img.to(device)
 
     st = time.time()
-    feats = model(img)
+    preds = model(img)
     ed = time.time()
     delay = ed - st
 
-    pred_distri, pred_scores = torch.cat([xi.view(feats[0].shape[0], model.no, -1) for xi in feats], 2).split(
-        (model.reg_max * 4, model.nc), 1
+    pred_conf, pred_distri, pred_scores = torch.cat([xi.view(preds[0].shape[0], 5+num_classes, -1) for xi in preds], 2).split(
+        (1, 4, num_classes), 1
     )
 
-    pred_scores = pred_scores.permute(0, 2, 1).contiguous()
+    pred_conf = pred_conf.permute(0, 2, 1).contiguous().sigmoid()  # (1, h*w, 1)
+    pred_scores = pred_scores.permute(0, 2, 1).contiguous().sigmoid()  # (1, h*w, nc)
     pred_distri = pred_distri.permute(0, 2, 1).contiguous()
 
-    anchor_points, stride_tensor = make_anchors(feats, model.stride, 0.5)
+    anchor_points, stride_tensor = make_anchors(preds, model.stride, 0.5)
 
     # Pboxes
     pred_bboxes = loss.bbox_decode(anchor_points, pred_distri)*stride_tensor  # xyxy, (b, h*w, 4)
     pred_bboxes = (pred_bboxes.squeeze(0)/resize_shape*input_size[0]).clamp(min=0.01, max=input_size[0]-0.01)
 
-    pred_scores = pred_scores.view(-1).detach().sigmoid()
+    pred_scores = pred_scores.squeeze(0)
+    print(pred_bboxes)
     pt_mask = boxes_nms(pred_bboxes, pred_scores)
     boxes = pred_bboxes[pt_mask]
 

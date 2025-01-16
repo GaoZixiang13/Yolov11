@@ -17,7 +17,7 @@ num_workers = 0
 # 初始学习率大小
 warmup = False
 warmup_lr = 1e-6
-LR = 1e-4
+LR = 2e-4
 use_cosine = False
 # 训练的世代数
 warmup_epoch = 1
