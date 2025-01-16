@@ -5,8 +5,8 @@ import math
 
 from docutils.nodes import target
 from sqlalchemy.util import clsname_as_plain_name
+from torch.onnx.symbolic_opset11 import unsqueeze
 
-from train.val import pt_mask
 from utils.metrics import bbox_iou, box_iou
 
 def make_anchors(feats, strides, grid_cell_offset=0.5):
@@ -39,19 +39,23 @@ class v8DetectionLoss:
         self.assigner = simOTA(nc=self.nc, topk=tal_topk)
 
     def bbox_decode(self, anchor_points, pred_dist):
-        lt, rb = pred_dist.chunk(2, dim=1)
+        lt, rb = pred_dist.chunk(2, dim=-1)
         x1y1, x2y2 = anchor_points-lt, anchor_points+rb
         return torch.cat((x1y1, x2y2), dim=-1)
 
     def __call__(self, preds, targets):
+        '''
+        :param preds: bs, 5+nc, h, w
+        :param targets:
+        :return:
+        '''
         """Calculate the sum of the loss for box, cls and dfl multiplied by batch size."""
-        loss = torch.zeros(3, device=self.device)  # conf, box, cls
         pred_conf, pred_distri, pred_scores = torch.cat([xi.view(preds[0].shape[0], self.no, -1) for xi in preds], 2).split(
             (1, 4, self.nc), 1
         )
 
-        pred_conf   = pred_conf.permute(0, 2, 1).contiguous().sigmoid()
-        pred_scores = pred_scores.permute(0, 2, 1).contiguous().sigmoid()
+        pred_conf   = pred_conf.permute(0, 2, 1).contiguous().sigmoid() # (bs, h*w, 1)
+        pred_scores = pred_scores.permute(0, 2, 1).contiguous().sigmoid() # (bs, h*w, nc)
         pred_distri = pred_distri.permute(0, 2, 1).contiguous()
 
         anchor_points, stride_tensor = make_anchors(preds, self.stride, 0.5)
@@ -60,109 +64,144 @@ class v8DetectionLoss:
         batch_size = pred_scores.shape[0]
         # Targets
         gt_labels, gt_bboxes = targets.split((1, 4), 2)  # cls, xyxy
-        mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0.0)
+        mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0.0).bool()
 
         # Pboxes
         pred_bboxes = self.bbox_decode(anchor_points, pred_distri)
-        pt_mask = self.assigner(pred_bboxes, gt_bboxes, mask_gt, pred_scores*pred_conf, gt_labels)
+        loss_box, loss_cls, loss_conf = self.assigner(pred_bboxes, gt_bboxes, mask_gt, pred_scores*pred_conf, pred_conf, gt_labels.long(), anchor_points, stride_tensor)
+        loss = loss_box*self.hyp.box + loss_cls*self.hyp.cls + loss_conf*self.hyp.conf
 
-        pred_bboxes = (pred_bboxes*stride_tensor).clamp(min=0, max=self.reshape)# xyxy, (b, h*w, 4)
-        gt_scores = F.one_hot(gt_labels, num_classes=self.nc) #(bs, num_max_gt, nc)
+        return loss
 
-        loss[0] = ciou(pred_bboxes[pt_mask], gt_bboxes[mask_gt])
-        loss[1] = F.binary_cross_entropy(pred_scores[pt_mask], gt_scores[mask_gt])
-        loss[2] = F.binary_cross_entropy(pred_conf, gt_scores[mask_gt])
-
-        loss[0] *= self.hyp.box  # box gain
-        loss[1] *= self.hyp.cls  # cls gain
-        loss[2] *= self.hyp.dfl  # conf gain
-
-        return loss.sum() * batch_size, loss.detach()  # loss(box, cls, conf)
-
-def ciou(preds, boxes, eps=1e-9): #(bs, num_fg, 4), (bs, 1, 4)
+def iou(preds, boxes, ciou=False, eps=1e-9): #(bs, num, 4)
     b1_x1, b1_y1, b1_x2, b1_y2 = preds.chunk(4, -1)
     b2_x1, b2_y1, b2_x2, b2_y2 = boxes.chunk(4, -1)
     w1, h1 = b1_x2 - b1_x1, b1_y2 - b1_y1 + eps
     w2, h2 = b2_x2 - b2_x1, b2_y2 - b2_y1 + eps
 
     # Intersection area
-    inter = ((b1_x2.minimum(b2_x2, dim=-1) - b1_x1.maximum(b2_x1, dim=-1)).clamp_(0) *
-             (b1_y2.minimum(b2_y2, dim=-1) - b1_y1.maximum(b2_y1, dim=-1)).clamp_(0))
+    inter = ((b1_x2.minimum(b2_x2) - b1_x1.maximum(b2_x1)).clamp_(0) *
+             (b1_y2.minimum(b2_y2) - b1_y1.maximum(b2_y1)).clamp_(0))
 
     # Union Area
     union = w1 * h1 + w2 * h2 - inter + eps
 
     # IoU
     iou = inter / union
-    cw = b1_x2.maximum(b2_x2, dim=-1) - b1_x1.minimum(b2_x1, dim=-1)  # convex (smallest enclosing box) width
-    ch = b1_y2.maximum(b2_y2, dim=-1) - b1_y1.minimum(b2_y1, dim=-1)  # convex height
-    c2 = cw.pow(2) + ch.pow(2) + eps  # convex diagonal squared
-    d2 = ((b2_x1 + b2_x2 - b1_x1 - b1_x2).pow(2) + (b2_y1 + b2_y2 - b1_y1 - b1_y2).pow(2)) / 4  # center dist**2
-    v = (4 / math.pi**2) * ((w2 / h2).atan() - (w1 / h1).atan()).pow(2)
-    with torch.no_grad():
-        alpha = v / (v - iou + (1 + eps))
-    return iou - (d2 / c2 + v * alpha)  # CIoU
+
+    if ciou:
+        cw = b1_x2.maximum(b2_x2) - b1_x1.minimum(b2_x1)  # convex (smallest enclosing box) width
+        ch = b1_y2.maximum(b2_y2) - b1_y1.minimum(b2_y1)  # convex height
+        c2 = cw.pow(2) + ch.pow(2) + eps  # convex diagonal squared
+        d2 = ((b2_x1 + b2_x2 - b1_x1 - b1_x2).pow(2) + (b2_y1 + b2_y2 - b1_y1 - b1_y2).pow(2)) / 4  # center dist**2
+        v = (4 / math.pi**2) * ((w2 / h2).atan() - (w1 / h1).atan()).pow(2)
+        with torch.no_grad():
+            alpha = v / (v - iou + (1 + eps))
+        return iou - (d2 / c2 + v * alpha)  # CIoU
+    return iou
 
 class simOTA(nn.Module):
-    def __init__(self, nc=80, topk=10, eps=1e-9):
+    def __init__(self, reshape=640, nc=80, topk=10, eps=1e-9):
         super().__init__()
         self.topk = topk
         self.nc = nc
         self.eps = eps
+        self.reshape = reshape
         self.dis = 2.5
 
-    def forward(self, pred_boxes, gt_boxes, mask_gt, pred_scores, gt_labels):
+    def forward(self, pred_boxes, gt_boxes, mask_gt, pred_scores, pred_conf, gt_labels, anchor_points, stride_tensor):
         '''
         :param pred_boxes: (bs, h*w, 4)
         :param gt_boxes: (bs, num_max_gt, 4)
         :param mask_gt: (bs, num_max_gt)
         :param pred_scores: (bs, h*w, nc)
+        :param pred_conf: (bs, h*w, 1)
         :param gt_labels: (bs, num_max_gt, 1)
-        :return:
+        :param anchor_points: (h*w, 2)
+        :param stride_tensor: (h*w, 1)
+        :return: pt_mask: (bs, num_gt, h*w)
         '''
-        bs = pred_boxes.shape[0]
+        bs, hw = pred_boxes.shape[0], pred_boxes.shape[1]
         dtype = pred_boxes.dtype
         device = pred_boxes.device
-        gt_num = mask_gt.sum()
-        pred_boxes_center = (pred_boxes[..., :2] + pred_boxes[..., 2:])/2
-        pred_boxes_center_epd = pred_boxes_center.expand(gt_num, dim=-1) #(bs, h*w, 4, gt_num)
-        lt = pred_boxes_center_epd[..., :2] - gt_boxes[mask_gt][..., :2]
-        rb = gt_boxes[mask_gt][..., 2:]     - pred_boxes_center_epd[..., 2:]
-        in_boxes = ((lt > 0).sum(-1) == 2) & ((rb > 0).sum(-1) == 2) #(bs, h*w, 4)
+        num_max_gt = mask_gt.shape[1]
+        grid_tensor = self.reshape / stride_tensor #(h*w, 1)
+        gt_boxes_grid = gt_boxes.unsqueeze(-2).expand(bs, num_max_gt, hw, 4)
+        gt_boxes_grid = gt_boxes_grid/grid_tensor
+        pred_boxes_real = (pred_boxes*stride_tensor).clamp(min=0, max=self.reshape)
 
-        gt_boxes_center = (gt_boxes[..., :2] + gt_boxes[..., 2:])/2
-        gt_boxes_lt, gt_boxes_rb = gt_boxes_center[...,:2]-self.dis, gt_boxes_center[...,2:]+self.dis
-        gt_boxes_two = torch.cat((gt_boxes_lt, gt_boxes_rb), dim=-1)
-        lt_two = pred_boxes_center_epd[..., :2] - gt_boxes_two[mask_gt][..., :2]
-        rb_two = gt_boxes_two[mask_gt][..., 2:]     - pred_boxes_center_epd[..., 2:]
-        in_centers = ((lt_two > 0).sum(-1) == 2) & ((rb_two > 0).sum(-1) == 2) #(bs, h*w, 4)
+        loss = torch.zeros(3, device=device).type(dtype)  # conf, box, cls
 
-        fg_mask, is_in_boxes_and_centers = in_boxes | in_centers, in_boxes & in_centers
-
-        gt_scores = F.one_hot(gt_labels, num_classes=self.nc) #(bs, num_max_gt, nc)
-
-        pt_mask = torch.tensor([]).type(dtype).to(device) #(bs, gt_num, h*w)
-        cost_mat = torch.tensor([]).type(dtype).to(device) #(bs, gt_num, h*w)
-        for i in range(gt_num):
-            ciou_loss = ciou(pred_boxes[fg_mask], gt_boxes[mask_gt][i]) #(bs, num_fg)
-            cls_loss  = F.binary_cross_entropy(pred_scores[fg_mask], gt_scores[mask_gt][i].expand(fg_mask.sum(), dim=1)) #(bs, num_fg, nc)
-            cost = (cls_loss + 3.0 * ciou_loss + 100000 * (~is_in_boxes_and_centers)) #(bs, num_fg)
-            pt_num, _ = cost.topk(10, dim=-1).type(torch.LongTensor).clamp(min=1)
-            _, pt_mask_i_idx = cost.topk(k=pt_num, dim=-1, largest=False)
-            pt_mask_i = F.one_hot(pt_mask_i_idx, fg_mask.shape[1]).sum(-2).type(torch.BoolTensor)
-
-            cost_mat = torch.stack((cost_mat, cost), dim=0)
-            pt_mask = torch.stack((pt_mask, pt_mask_i), dim=0)
-
-        overlap = pt_mask.sum(-2) > 1
         for b in range(bs):
-            pt_mask[b, :, overlap[b]] = False
-            deal_mat = cost_mat[b, :, overlap[b]] #(gt_num, overlap_num)
-            pick_idx = deal_mat.argmin(dim=0)
-            pt_mask[b, pick_idx, overlap[b]] = True
+            pt_mask = torch.zeros(num_max_gt, hw).bool().to(device) #(num_max_gt, h*w)
+            anchor_points_pd = anchor_points.unsqueeze(0).expand(num_max_gt, hw, 2) #(num_max_gt, h*w, 2)
+            gt_grid       = gt_boxes_grid[b] #(num_max_gt, h*w, 4)
+            lt = anchor_points_pd - gt_grid[..., :2]
+            rb = gt_grid[..., 2:] - anchor_points_pd
+            in_boxes = ((lt > 0).sum(-1) == 2) & ((rb > 0).sum(-1) == 2)  #(num_max_gt, h*w)
 
-        return pt_mask
+            gt_boxes_center = (gt_grid[..., :2] + gt_grid[..., 2:])/2
+            gt_boxes_lt, gt_boxes_rb = gt_boxes_center[...,:2]-self.dis, gt_boxes_center[...,2:]+self.dis
+            gt_boxes_two = torch.cat((gt_boxes_lt, gt_boxes_rb), dim=-1)
+            lt_two = anchor_points_pd[..., :2] - gt_boxes_two[..., :2]
+            rb_two = gt_boxes_two[..., 2:] - anchor_points_pd[..., 2:] #(num_max_gt, h*w, 2)
+            in_centers = ((lt_two > 0).sum(-1) == 2) & ((rb_two > 0).sum(-1) == 2) #(num_max_gt, h*w)
 
+            fg_mask, is_in_boxes_and_centers = in_boxes | in_centers, in_boxes & in_centers #(num_max_gt, h*w)
+
+            gt_scores = F.one_hot(gt_labels[b], num_classes=self.nc).squeeze(1).type(dtype).to(device) #(num_max_gt, nc)
+
+            cost_function = []
+
+            for i in range(num_max_gt):
+                gt_box = gt_boxes[b][i]
+                fg_mask_i = fg_mask[i] #(h*w)
+                in_and_i = is_in_boxes_and_centers[i]
+                num_fg = fg_mask_i.sum().long()
+
+                if gt_box.sum() == 0:
+                    cost = 100000 * (~in_and_i)  # (h*w)
+                    cost_function.append(cost)
+                    continue
+
+                iou_val = iou(pred_boxes_real[b], gt_box.unsqueeze(0).expand(hw, 4), ciou=False).squeeze(-1) #(num_fg, 4)
+                cls_loss  = F.binary_cross_entropy(pred_scores[b], gt_scores[i].unsqueeze(0).expand(hw, self.nc)) #(num_fg, nc)
+                cost = (cls_loss + 3.0 * iou_val + 100000 * (~in_and_i)) #(h*w)
+
+                k = min(self.topk, num_fg)
+                pt_num, _ = iou_val[fg_mask_i].topk(k=k, dim=-1) #(10)
+                pt_num = pt_num.sum(-1).clamp(min=1).type(torch.LongTensor) #(0)
+
+                _, pt_mask_i_idx = cost.topk(k=pt_num, dim=-1, largest=False) #(pt_num[b])
+                mask_t = F.one_hot(pt_mask_i_idx, num_classes=hw).bool().squeeze(0).to(device)
+
+                pt_mask[i][mask_t] = True
+                cost_function.append(cost)
+
+            cost_function = torch.stack(cost_function, dim=0)
+            # cost_function (num_max_gt, h*w)
+            # 去除重叠样本
+            overlap_mask = pt_mask.sum(dim=0) > 1 #(h*w)
+            cost_min_gt_indices = torch.argmin(cost_function[:, overlap_mask], dim=0) #(num_overlap)
+            pt_mask[..., overlap_mask] = False
+            pt_mask[cost_min_gt_indices, overlap_mask] = True
+
+            for i in range(num_max_gt):
+                gt_box = gt_boxes[b][i]
+                if gt_box.sum() == 0:
+                    continue
+
+                num_pt = pt_mask[i].sum().long().item()
+                if num_pt == 0:
+                    continue
+
+                loss[0] += 1 - iou(pred_boxes_real[b][pt_mask[i]], gt_box, ciou=True).sum()
+                loss[1] += F.binary_cross_entropy(pred_scores[b][pt_mask[i]], gt_scores[i].unsqueeze(0).expand(num_pt, self.nc))
+
+            gt_conf = pt_mask.sum(dim=0) > 0 #(h*w)
+            loss[2] += F.binary_cross_entropy(pred_conf[b].squeeze(-1), gt_conf.type(dtype))
+
+        return loss[0], loss[1], loss[2]
 
 
 

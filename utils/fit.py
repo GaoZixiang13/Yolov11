@@ -20,7 +20,7 @@ def fit_one_epoch(model, optimizer, loss_func, lr_scheduler, EPOCH, epoch, train
             # bs = bx.size(0)
             optimizer.zero_grad()
             preds = model(bx) #list-3*[N, 4 + nc]
-            train_loss = loss_func(preds, by)[0]
+            train_loss = loss_func(preds, by)
 
             # train_loss = train_loss_tol/torch.maximum(num_gt, torch.ones_like(num_gt))
             train_loss.backward()
@@ -54,7 +54,7 @@ def fit_one_epoch(model, optimizer, loss_func, lr_scheduler, EPOCH, epoch, train
                     by = by.to(device)
 
                 preds = model(bx)
-                val_loss = loss_func(preds, by)[0].item()
+                val_loss = loss_func(preds, by).item()
 
                 # val_loss = val_loss_tol/max(num_gt, 1)
                 loss2 += val_loss

@@ -1,8 +1,6 @@
 import torch
 import torch.nn as nn
 
-from train.val import num_classes
-from utils.metrics import box_iou
 from .conv import CBS, DWConv
 from .component import C3K2, C2PSA, SPPF
 
@@ -57,7 +55,7 @@ class YoloHead(nn.Module):
         self.nc = nc  # number of classes
         self.nl = len(ch)  # number of detection layers
         self.no = nc + 5
-        c2, c3 = max((16, ch[0] // 4, self.reg_max * 4)), max(ch[0], min(self.nc, 100))  # channels
+        c2, c3 = max((16, ch[0] // 4, 4)), max(ch[0], min(self.nc, 100))  # channels
         self.cv2 = nn.ModuleList(
             nn.Sequential(CBS(x, c2, 3), CBS(c2, c2, 3), nn.Conv2d(c2, 5, 1)) for x in ch
         )

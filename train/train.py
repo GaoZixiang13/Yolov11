@@ -12,12 +12,12 @@ print(torch.__file__)
 
 # ---------------------------------------------------------------
 # Hyper Parameters
-BATCH_SIZE = 6
+BATCH_SIZE = 4
 num_workers = 0
 # 初始学习率大小
 warmup = False
 warmup_lr = 1e-6
-LR = 5e-4
+LR = 1e-4
 use_cosine = False
 # 训练的世代数
 warmup_epoch = 1
@@ -106,7 +106,7 @@ else:
     lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer=optimizer, T_max=5, eta_min=LR/100)
 
 #损失函数
-loss_func = v8DetectionLoss(model, device=device)
+loss_func = v8DetectionLoss(model, device=device, re_shape=RE_SIZE_shape)
 
 val_loss_save = 1e10
 

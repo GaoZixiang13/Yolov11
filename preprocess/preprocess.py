@@ -40,7 +40,6 @@ class CarObjectDataset(Dataset):
 
     def image_preprocess(self, img_path, labels):
         img = Image.open('../DataSets/CarObject/data/training_images/'+img_path).convert('RGB')
-        print(np.transpose(np.array(img)/255., (2, 0, 1)).shape)
 
         img = transforms.Pad((0,0,0,self.input_size[0]-self.input_size[1]), fill=0)(img)
         # --------------------------------------------------------
