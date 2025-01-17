@@ -6,7 +6,7 @@ import torch, time
 import numpy as np
 import glob, tqdm
 from PIL import Image, ImageDraw
-from utils.loss_t import v8DetectionLoss, make_anchors, iou
+from utils.loss_x import v8DetectionLoss, make_anchors, iou
 
 CUDA = True
 input_size = (676, 380)
@@ -36,7 +36,7 @@ with open('../DataSets/CarObject/Data/sample_submission.csv') as f:
 device = torch.device("cuda:%d" % gpu_device_id if torch.cuda.is_available() else "cpu")
 model = Yolov11(nc=1)
 model_path = '../logs/' \
-             'val_loss59.434-size640-lr0.00000239-ep042-train_loss52.772.pth'
+             'val_loss1745.381-size640-lr0.00000057-ep049-train_loss1843.478.pth'
 model.load_state_dict(torch.load(model_path))
 
 if Parallel:
@@ -60,7 +60,7 @@ def img_preprocess(img_path):
 
     return img_tensor
 
-def boxes_nms(boxes, score, pred_conf, cls_th=0.3, nms_th=0.45):
+def boxes_nms(boxes, score, pred_conf, cls_th=0.6, nms_th=0.3):
     '''
     :param boxes: (hw, 4)
     :param score: (hw, nc)
@@ -93,8 +93,8 @@ for i, img_name in enumerate(x_train_path):
     ed = time.time()
     delay = ed - st
 
-    pred_conf, pred_distri, pred_scores = torch.cat([xi.view(preds[0].shape[0], 5+num_classes, -1) for xi in preds], 2).split(
-        (1, 4, num_classes), 1
+    pred_distri, pred_conf, pred_scores = torch.cat([xi.view(preds[0].shape[0], 5+num_classes, -1) for xi in preds], 2).split(
+        (4, 1, num_classes), 1
     )
 
     pred_conf = pred_conf.permute(0, 2, 1).contiguous().sigmoid()  # (1, h*w, 1)
@@ -123,4 +123,6 @@ for i, img_name in enumerate(x_train_path):
         # draw.text((b[0] - b[2] / 2, b[1] - b[2] / 2), '{:.2f}'.format(b[4] * b[5] * 100), fill='red', stroke_width=1)
 
     image.save('../predictImages/{}.jpg'.format(img_name.split('.')[0]))
+    print('推理时间：{:.2f}ms'.format(delay))
+
 print('done!\n')

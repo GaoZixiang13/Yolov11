@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from .conv import CBS, DWConv
-from .component import C3K2, C2PSA, SPPF
+from .component import C3K2, C2PSA, SPPF, DFL
 
 class YoloBackbone(nn.Module):
     def __init__(self, ch=(256, 512, 1024)):
@@ -53,22 +53,28 @@ class YoloHead(nn.Module):
     def __init__(self, nc=80, ch=(256, 512, 1024)):
         super().__init__()
         self.nc = nc  # number of classes
+        self.legacy = False
         self.nl = len(ch)  # number of detection layers
-        self.no = nc + 5
-        c2, c3 = 32, 128  # channels
+        self.reg_max = 16  # DFL channels (ch[0] // 16 to scale 4/8/12/16/20 for n/s/m/l/x)
+        self.no = nc + self.reg_max * 4  # number of outputs per anchor
+        self.stride = (8, 16, 32)  # strides computed during build
+        c2, c3 = max((16, ch[0] // 4, self.reg_max * 4)), max(ch[0], min(self.nc, 100))  # channels
         self.cv2 = nn.ModuleList(
-            nn.Sequential(CBS(x, c2, 3), CBS(c2, c2, 3), nn.Conv2d(c2, 5, 1)) for x in ch
+            nn.Sequential(CBS(x, c2, 3), CBS(c2, c2, 3), nn.Conv2d(c2, 4 * self.reg_max, 1)) for x in ch
         )
         self.cv3 = (
-            nn.ModuleList(
+            nn.ModuleList(nn.Sequential(CBS(x, c3, 3), CBS(c3, c3, 3), nn.Conv2d(c3, self.nc, 1)) for x in ch)
+            if self.legacy
+            else nn.ModuleList(
                 nn.Sequential(
-                    nn.Sequential(DWConv(x, x, 3), CBS(x, c3//2, 1)),
-                    nn.Sequential(DWConv(c3//2, c3//2, 3), CBS(c3//2, c3//4, 1)),
-                    nn.Conv2d(c3//4, self.nc, 1),
+                    nn.Sequential(DWConv(x, x, 3), CBS(x, c3, 1)),
+                    nn.Sequential(DWConv(c3, c3, 3), CBS(c3, c3, 1)),
+                    nn.Conv2d(c3, self.nc, 1),
                 )
                 for x in ch
             )
         )
+        self.dfl = DFL(self.reg_max) if self.reg_max > 1 else nn.Identity()
 
     def forward(self, x):
         for i in range(self.nl):
@@ -76,17 +82,18 @@ class YoloHead(nn.Module):
         return x
 
 class Hyp:
-    def __init__(self, box=6, cls=2.5, conf=1):
+    def __init__(self, box=7.5, cls=2.5, dfl=1.5):
         self.box = box
         self.cls = cls
-        self.conf = conf
+        self.dfl = dfl
 
 class Yolov11(nn.Module):
     def __init__(self, nc=80, ch=(256, 512, 1024), stride=(8, 16, 32)):
         super().__init__()
         self.nc = nc  # number of classes
         self.nl = len(ch)  # number of detection layers
-        self.no = nc + 5  # number of outputs per anchor
+        self.reg_max = 16  # DFL channels (ch[0] // 16 to scale 4/8/12/16/20 for n/s/m/l/x)
+        self.no = nc + self.reg_max * 4  # number of outputs per anchor
         self.stride = stride  # strides computed during build
         self.backbone = YoloBackbone(ch)
         self.neck = YoloNeck(ch)

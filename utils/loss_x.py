@@ -47,8 +47,8 @@ class v8DetectionLoss:
         :return:
         '''
         """Calculate the sum of the loss for box, cls and dfl multiplied by batch size."""
-        pred_conf, pred_distri, pred_scores = torch.cat([xi.view(preds[0].shape[0], self.no, -1) for xi in preds], 2).split(
-            (1, 4, self.nc), 1
+        pred_distri, pred_conf, pred_scores = torch.cat([xi.view(preds[0].shape[0], self.no, -1) for xi in preds], 2).split(
+            (4, 1, self.nc), 1
         )
 
         pred_conf   = pred_conf.permute(0, 2, 1).contiguous().sigmoid() # (bs, h*w, 1)
@@ -138,7 +138,6 @@ class simOTA(nn.Module):
         for b in range(bs):
             pt_mask = torch.zeros(num_max_gt, hw).bool().to(device) #(num_max_gt, h*w)
             loss_t = torch.zeros(3, device=device).type(dtype)  # conf, box, cls
-            num_gt = mask_gt[b].sum()
             cost_function = []
 
             for i in range(num_max_gt):
@@ -166,19 +165,19 @@ class simOTA(nn.Module):
 
                 num_fg = fg_mask.sum().long()
 
-                gt_score_pd = gt_scores.unsqueeze(0).expand(hw, self.nc)
+                gt_score_pd = gt_scores.unsqueeze(0).repeat(hw, 1)
                 gt_score_pd[~fg_mask] = 0.
 
                 iou_val = iou(pred_boxes[b], gt_box, ciou=False).squeeze(-1) #(h*w, 1)
                 iou_cost = -torch.log(iou_val + self.eps)
-                cls_loss  = self.Focalloss(pred_scores[b], gt_score_pd).sum(-1) #(num_fg, nc)
+                cls_loss  = F.binary_cross_entropy(pred_scores[b], gt_score_pd, reduction="none").sum(-1) #(h*w)
                 cost = (cls_loss + 3.0 * iou_cost + 100000 * (~is_in_boxes_and_centers)) #(h*w)
 
                 if num_fg == 0:
                     print("error!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
                 k = min(self.topk, num_fg)
                 pt_num, _ = iou_val[fg_mask].topk(k=k, dim=-1) #(10)
-                pt_num = pt_num.sum(-1).clamp(min=1).type(torch.LongTensor) #(0)
+                pt_num = pt_num.sum().clamp(min=1).type(torch.LongTensor) #(0)
 
                 _, pt_mask_i_idx = cost.topk(k=pt_num, dim=-1, largest=False) #(pt_num[b])
                 mask_t = F.one_hot(pt_mask_i_idx, num_classes=hw).sum(0).bool().squeeze(0).to(device)
@@ -209,15 +208,15 @@ class simOTA(nn.Module):
                 gt_score_pd = gt_scores.unsqueeze(0).expand(num_pt, self.nc)
 
                 loss_t[0] += (1 - iou(pred_boxes[b][pt_mask[i]], gt_box, ciou=True)).sum()
-                loss_t[1] += self.Focalloss(pred_scores[b][pt_mask[i]], gt_score_pd).sum()
+                loss_t[1] += self.BCEloss(pred_scores[b][pt_mask[i]], gt_score_pd).sum()
 
-            loss_t[0] /= num_gt
-            loss_t[1] /= num_gt
+            num_pts = pt_mask.sum().long() #这张图片被选为正样本的预测点数量
+
             gt_conf = pt_mask.sum(dim=0) > 0 #(h*w)
-            loss[2] += self.Focalloss(pred_conf[b].sum(-1), gt_conf.type(dtype)).sum()
+            loss[2] += self.BCEloss(pred_conf[b].squeeze(-1), gt_conf.type(dtype)).sum()/num_pts #conf
 
-            loss[0] += loss_t[0]
-            loss[1] += loss_t[1]
+            loss[0] += loss_t[0]/num_pts #box
+            loss[1] += loss_t[1]/num_pts #cls
 
         return loss[0], loss[1], loss[2]
 

@@ -9,7 +9,6 @@ __all__ = (
     "C2PSA",
     "SPPF",
 )
-
 class DFL(nn.Module):
     """
     Integral module of Distribution Focal Loss (DFL).

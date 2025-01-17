@@ -4,7 +4,7 @@ from torch.utils.data import Dataset, DataLoader, random_split
 from preprocess.preprocess import CarObjectDataset
 from utils.fit import fit_one_epoch
 from net.backbone import Yolov11
-from utils.loss_t import v8DetectionLoss
+from utils.loss11 import v8DetectionLoss
 from DrawPic.DrawImage import drawLoss
 
 print(torch.version.cuda)
@@ -17,7 +17,7 @@ num_workers = 0
 # 初始学习率大小
 warmup = False
 warmup_lr = 1e-6
-LR = 2e-4
+LR = 5e-4
 use_cosine = False
 # 训练的世代数
 warmup_epoch = 1
