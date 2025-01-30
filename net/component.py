@@ -83,7 +83,7 @@ class C2f(nn.Module):
         return self.cv2(torch.cat(y, 1))
 
 class C3K2(C2f):
-    def __init__(self, c1, c2, c3k=False, n=1, e=0.5, g=1, shortcut=True):
+    def __init__(self, c1, c2, c3k=False, n=2, e=1, g=1, shortcut=True):
         super().__init__(c1, c2, n, shortcut, g, e)
         c_ = int(c2*e)
         self.m = nn.ModuleList(

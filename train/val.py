@@ -6,7 +6,8 @@ import torch, time
 import numpy as np
 import glob, tqdm
 from PIL import Image, ImageDraw
-from utils.loss_x import v8DetectionLoss, make_anchors, iou
+from utils.loss11 import v8DetectionLoss, make_anchors
+from utils.metrics import bbox_iou
 
 CUDA = True
 input_size = (676, 380)
@@ -14,6 +15,9 @@ resize_shape = 640
 num_classes = 1
 gpu_device_id = 0
 Parallel = False
+reg_max = 16
+stride = (8, 16, 32)
+no = reg_max * 4 + num_classes
 
 # font = ImageFont.truetype(r'/home/b201/gzx/yolox_self/font/STSONG.TTF', 12)
 
@@ -24,7 +28,7 @@ Parallel = False
 # anchors = torch.tensor(anchors)/pic_shape
 
 x_train_path = []
-with open('../DataSets/CarObject/Data/sample_submission.csv') as f:
+with open('../DataSets/CarObject/Data/train_solution_bounding_boxes.csv') as f:
     lines = f.readlines()
     for line in lines[1:]:
         line = line.strip('\n')
@@ -34,9 +38,9 @@ with open('../DataSets/CarObject/Data/sample_submission.csv') as f:
 
 
 device = torch.device("cuda:%d" % gpu_device_id if torch.cuda.is_available() else "cpu")
-model = Yolov11(nc=1)
+model = Yolov11(nc=num_classes)
 model_path = '../logs/' \
-             'val_loss1745.381-size640-lr0.00000057-ep049-train_loss1843.478.pth'
+             'val_loss92.611-size640-lr0.00000090-ep060-train_loss92.517.pth'
 model.load_state_dict(torch.load(model_path))
 
 if Parallel:
@@ -47,7 +51,7 @@ if CUDA:
     # anchors = anchors.cuda()
 
 def img_preprocess(img_path):
-    img = Image.open('../DataSets/CarObject/data/testing_images/' + img_path).convert('RGB')
+    img = Image.open('../DataSets/CarObject/data/training_images/' + img_path).convert('RGB')
     img = transforms.Pad((0, 0, 0, input_size[0] - input_size[1]), fill=0)(img)
     # --------------------------------------------------------
     # normal data augmentation
@@ -60,20 +64,20 @@ def img_preprocess(img_path):
 
     return img_tensor
 
-def boxes_nms(boxes, score, pred_conf, cls_th=0.6, nms_th=0.3):
+def boxes_nms(boxes, score, cls_th=0.01, nms_th=0.5):
     '''
     :param boxes: (hw, 4)
     :param score: (hw, nc)
     :param pred_conf: (hw, 1)
     :return:
     '''
-    pt_mask = ((score*pred_conf > cls_th).sum(-1) > 0) #(hw)
+    pt_mask = ((score > cls_th).sum(-1) > 0) #(hw)
     unselected = pt_mask == True
-    sorted  = (score*pred_conf).squeeze(-1).argsort() #(hw)
+    sorted  = score.argsort(-1) #(hw)
     while unselected.sum() > 0:
         cur_box_idx = sorted[pt_mask].argmax()
         box = boxes[pt_mask][cur_box_idx]
-        iou_ = iou(boxes, box, ciou=False).squeeze(-1)
+        iou_ = bbox_iou(boxes, box, xywh=False, CIoU=True).squeeze(-1)
         ignore = (iou_ > nms_th) & (iou_ < 1)
         pt_mask[ignore] = False
         unselected[iou_ > nms_th] = False
@@ -82,39 +86,42 @@ def boxes_nms(boxes, score, pred_conf, cls_th=0.6, nms_th=0.3):
     return pt_mask
 
 model.eval()
-for i, img_name in enumerate(x_train_path):
+for i, img_name in enumerate(x_train_path[:100]):
     img = img_preprocess(img_name).type(torch.FloatTensor).unsqueeze(0)
     loss = v8DetectionLoss(model, re_shape=resize_shape, device=device)
     if CUDA:
         img = img.to(device)
 
     st = time.time()
-    preds = model(img)
+    feats = model(img)['one2many']
     ed = time.time()
     delay = ed - st
 
-    pred_distri, pred_conf, pred_scores = torch.cat([xi.view(preds[0].shape[0], 5+num_classes, -1) for xi in preds], 2).split(
-        (4, 1, num_classes), 1
+    pred_distri, pred_scores = torch.cat([xi.view(feats[0].shape[0], no, -1) for xi in feats], 2).split(
+        (reg_max * 4, num_classes), 1
     )
 
-    pred_conf = pred_conf.permute(0, 2, 1).contiguous().sigmoid()  # (1, h*w, 1)
-    pred_scores = pred_scores.permute(0, 2, 1).contiguous().sigmoid()  # (1, h*w, nc)
+    dtype = pred_scores.dtype
+    batch_size = pred_scores.shape[0]
+
+    pred_scores = pred_scores.permute(0, 2, 1).contiguous().sigmoid()
     pred_distri = pred_distri.permute(0, 2, 1).contiguous()
 
-    anchor_points, stride_tensor = make_anchors(preds, model.stride, 0)
+    anchor_points, stride_tensor = make_anchors(feats, stride, 0.5)
 
     # Pboxes
     pred_bboxes = loss.bbox_decode(anchor_points, pred_distri)*stride_tensor  # xyxy, (b, h*w, 4)
     pred_bboxes = (pred_bboxes.squeeze(0)/resize_shape*input_size[0])
 
     pred_scores = pred_scores.squeeze(0)
-    pt_mask = boxes_nms(pred_bboxes, pred_scores, pred_conf.squeeze(0))
+
+    pt_mask = boxes_nms(pred_bboxes, pred_scores)#(pred_scores > 0.5).squeeze(-1)
     boxes = pred_bboxes[pt_mask]
 
     '''
     最后得到的这个预测框可以用来进行绘制或是计算P、R等信息
     '''
-    image = Image.open('../DataSets/CarObject/data/testing_images/' + img_name).convert('RGB')
+    image = Image.open('../DataSets/CarObject/data/training_images/' + img_name).convert('RGB')
     draw = ImageDraw.Draw(image)
 
     for i, b in enumerate(boxes):
@@ -126,3 +133,4 @@ for i, img_name in enumerate(x_train_path):
     print('推理时间：{:.2f}ms'.format(delay))
 
 print('done!\n')
+

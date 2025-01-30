@@ -70,7 +70,7 @@ class v8DetectionLoss:
 
         self.use_dfl = m.reg_max > 1
 
-        self.assigner = TaskAlignedAssigner(topk=tal_topk, num_classes=self.nc, alpha=0.5, beta=6.0)
+        self.assigner = TaskAlignedAssigner(topk=tal_topk, num_classes=self.nc, alpha=0.5, beta=9.0)
         self.bbox_loss = BboxLoss(m.reg_max).to(device)
         self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)
 
@@ -99,8 +99,8 @@ class v8DetectionLoss:
         anchor_points, stride_tensor = make_anchors(feats, self.stride, 0.5)
 
         # Targets
-        gt_labels, gt_bboxes = targets.split((1, 4), 2)  # cls, xyxy
-        mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0.0).bool()
+        gt_bboxes, gt_labels = targets.split((4, 1), 2)  # cls, xyxy
+        mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0.0)
 
         # Pboxes
         pred_bboxes = self.bbox_decode(anchor_points, pred_distri)  # xyxy, (b, h*w, 4)
@@ -134,4 +134,20 @@ class v8DetectionLoss:
         loss[1] *= self.hyp.cls  # cls gain
         loss[2] *= self.hyp.dfl  # dfl gain
 
-        return loss.sum() * batch_size
+        return loss.sum() * batch_size  # loss(box, cls, dfl)
+
+class E2EDetectLoss:
+    """Criterion class for computing training losses."""
+
+    def __init__(self, model, device, re_shape):
+        """Initialize E2EDetectLoss with one-to-many and one-to-one detection losses using the provided model."""
+        self.one2many = v8DetectionLoss(model, device, re_shape, tal_topk=10)
+        self.one2one = v8DetectionLoss(model, device, re_shape, tal_topk=1)
+
+    def __call__(self, preds, targets):
+        """Calculate the sum of the loss for box, cls and dfl multiplied by batch size."""
+        one2many = preds["one2many"]
+        loss_one2many = self.one2many(one2many, targets)
+        one2one = preds["one2one"]
+        loss_one2one = self.one2one(one2one, targets)
+        return loss_one2many + loss_one2one
